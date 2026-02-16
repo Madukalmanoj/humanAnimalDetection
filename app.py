@@ -11,7 +11,7 @@ from torchvision.models.detection import fasterrcnn_resnet50_fpn
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision.models import efficientnet_b0
 import torch.nn as nn
-
+import huggingface_hub
 from huggingface_hub import hf_hub_download
 
 # ==========================
