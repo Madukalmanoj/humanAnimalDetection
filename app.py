@@ -21,20 +21,18 @@ from huggingface_hub import hf_hub_download
 st.set_page_config(page_title="Human / Animal Detection", layout="wide")
 st.title("🧠 Human / Animal Detection System")
 
-# Streamlit Cloud runs CPU
+# Streamlit Cloud is CPU only
 device = torch.device("cpu")
-st.sidebar.write("Device:", device)
+st.sidebar.success(f"Running on: {device}")
 
 # ==========================
 # LOAD MODELS FROM HF
 # ==========================
 
-@st.cache_resource
+@st.cache_resource(show_spinner=True)
 def load_models():
 
-    st.write("⬇ Downloading models from HuggingFace...")
-
-    # Download model files
+    # Download models from HuggingFace
     detector_path = hf_hub_download(
         repo_id="Manu542168/humananimal",
         filename="detector_finetuned.pth"
@@ -45,20 +43,22 @@ def load_models():
         filename="classifier_finetuned.pth"
     )
 
-    # Detector
+    # Build detector
     detector = fasterrcnn_resnet50_fpn(weights=None, weights_backbone=None)
     in_features = detector.roi_heads.box_predictor.cls_score.in_features
     detector.roi_heads.box_predictor = FastRCNNPredictor(in_features, 3)
 
     detector.load_state_dict(torch.load(detector_path, map_location=device))
-    detector.to(device).eval()
+    detector.to(device)
+    detector.eval()
 
-    # Classifier
+    # Build classifier
     classifier = efficientnet_b0(weights=None)
     classifier.classifier[1] = nn.Linear(1280, 2)
 
     classifier.load_state_dict(torch.load(classifier_path, map_location=device))
-    classifier.to(device).eval()
+    classifier.to(device)
+    classifier.eval()
 
     return detector, classifier
 
@@ -98,6 +98,7 @@ def run_detection(image):
 
         xmin, ymin, xmax, ymax = map(int, box)
 
+        # Crop for classification
         crop = image.crop((xmin, ymin, xmax, ymax))
         crop_tensor = cls_transform(crop).unsqueeze(0).to(device)
 
@@ -106,20 +107,25 @@ def run_detection(image):
             _, pred = torch.max(cls_output, 1)
 
         label = "Human" if pred.item() == 1 else "Animal"
-        color = (0,255,0) if label=="Human" else (255,100,100)
+        color = (0, 255, 0) if label == "Human" else (255, 100, 100)
 
         if label == "Human":
             human_count += 1
         else:
             animal_count += 1
 
-        cv2.rectangle(image_np,(xmin,ymin),(xmax,ymax),color,2)
-        cv2.putText(image_np,f"{label} {score:.2f}",
-                    (xmin,ymin-5),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,color,2)
+        cv2.rectangle(image_np, (xmin, ymin), (xmax, ymax), color, 2)
+        cv2.putText(
+            image_np,
+            f"{label} {score:.2f}",
+            (xmin, ymin - 5),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            color,
+            2
+        )
 
-    fps = 1/(time.time()-start)
+    fps = 1 / (time.time() - start)
 
     return image_np, human_count, animal_count, fps
 
@@ -130,25 +136,27 @@ def run_detection(image):
 
 uploaded_file = st.file_uploader(
     "Upload Image or Video",
-    type=["jpg","png","jpeg","mp4"]
+    type=["jpg", "png", "jpeg", "mp4"]
 )
 
 if uploaded_file:
 
+    # ================= IMAGE =================
     if "image" in uploaded_file.type:
 
         image = Image.open(uploaded_file).convert("RGB")
-        st.image(image, caption="Uploaded Image")
+        st.image(image, caption="Uploaded Image", width="stretch")
 
         if st.button("🔍 Run Detection"):
 
-            output_img, h, a, fps = run_detection(image)
+            with st.spinner("Running detection..."):
+                output_img, h, a, fps = run_detection(image)
 
-            st.image(output_img, caption="Detection Result")
-            st.write("Humans:", h)
-            st.write("Animals:", a)
-            st.write("FPS:", f"{fps:.2f}")
+            st.image(output_img, caption="Detection Result", width="stretch")
+            st.success(f"Humans: {h} | Animals: {a}")
+            st.info(f"FPS: {fps:.2f}")
 
+    # ================= VIDEO =================
     elif "video" in uploaded_file.type:
 
         tfile = tempfile.NamedTemporaryFile(delete=False)
@@ -157,13 +165,17 @@ if uploaded_file:
         cap = cv2.VideoCapture(tfile.name)
         stframe = st.empty()
 
+        st.warning("⚠ Video processing on CPU will be slow.")
+
         while cap.isOpened():
 
             ret, frame = cap.read()
             if not ret:
                 break
 
-            image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            image = Image.fromarray(rgb_frame)
+
             output, _, _, _ = run_detection(image)
 
             stframe.image(output, channels="RGB")
